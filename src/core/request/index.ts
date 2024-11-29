@@ -1,8 +1,8 @@
 import { AxiosRequestConfig } from "axios";
 import axios, { AxiosInstance } from "axios";
 import { refreshToken } from "@/api/interface/auth";
-import { TokenManager } from "./tokenUtil";
-import { DefaultErrorHandler, ErrorHandler } from "./errorHandler";
+import { TokenManager } from "../../utils/tokenUtil";
+import { DefaultErrorHandler, ErrorHandler } from "../../types/errorHandler";
 
 const BASE_URL = "baseURL"; // 实际的baseURL
 
