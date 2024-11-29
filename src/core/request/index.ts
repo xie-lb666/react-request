@@ -4,7 +4,7 @@ import { refreshToken } from "@/api/interface/auth";
 import { TokenManager } from "../../utils/tokenUtil";
 import { DefaultErrorHandler, ErrorHandler } from "../../types/errorHandler";
 
-const BASE_URL = "baseURL"; // 实际的baseURL
+export const BASE_URL = "baseURL"; // 实际的baseURL
 
 export type Response<T> =
   | {
@@ -55,11 +55,6 @@ export interface Request {
   ): Promise<Response<T>>;
 }
 
-const axiosInstance: AxiosInstance = axios.create({
-  baseURL: BASE_URL,
-  timeout: 3000,
-});
-
 interface PendingTask {
   config: AxiosRequestConfig;
   resolve: Function;
@@ -73,18 +68,15 @@ const queue: PendingTask[] = [];
  * @param handler 自定义的错误处理实现
  */
 let errorHandler: ErrorHandler = new DefaultErrorHandler();
-export function setErrorHandler(handler: ErrorHandler): void {
-  errorHandler = handler;
-}
 
-// 请求拦截器
+const axiosInstance: AxiosInstance = axios.create({
+  baseURL: BASE_URL,
+  timeout: 3000,
+});
+
+// 请求拦截器 处理请求前的逻辑
 axiosInstance.interceptors.request.use(
-  (config) => {
-    /**
-     * 可以在这处理 请求前的逻辑：
-     */
-    return config;
-  },
+  (config) => config,
   (error) => Promise.reject(error)
 );
 
@@ -99,8 +91,12 @@ axiosInstance.interceptors.response.use(
 
     const { status } = response;
 
-    // 如果未处理刷新 token 的请求，且是 401 状态
-    if (status === 401 && !config.url.includes("/token/refresh")) {
+    // 如果未处理刷新 token 的请求，且是 401 状态 同时不能是 刷新token的接口
+    if (
+      status === 401 &&
+      !config.url.includes("/token") &&
+      config.method === "PUT"
+    ) {
       if (!refreshing) {
         refreshing = true;
         try {
@@ -108,13 +104,17 @@ axiosInstance.interceptors.response.use(
             refreshToken: TokenManager.getToken()?.refresh ?? "",
           });
           if (newToken.data) {
+            // 保存token
+            TokenManager.saveToken(newToken.data);
+
             queue.forEach(({ config, resolve }) => {
+              // 注意 config为队列里的config
               resolve(
                 axiosInstance({
                   ...config,
                   headers: {
                     ...config.headers,
-                    Authorization: `Bearer ${newToken.data?.access}`,
+                    Authorization: newToken.data?.access,
                   },
                 })
               );
@@ -124,7 +124,7 @@ axiosInstance.interceptors.response.use(
               ...config,
               headers: {
                 ...config.headers,
-                Authorization: `Bearer ${newToken}`,
+                Authorization: newToken,
               },
             });
           } else {
@@ -156,42 +156,39 @@ const request: Request = async <
 >(
   args: RequestConfig<D, Q, U, P>
 ) => {
-  const {
-    url,
-    pathVariables,
-    params,
-    data,
-    ignoreAuth,
-    silentError,
-    throwError,
-    ...rest
-  } = args;
+  const { url, pathVariables, ignoreAuth, silentError, throwError, ...rest } =
+    args;
 
   // 替换路径变量
-  const parsedUrl = Object.keys(pathVariables || {}).reduce(
-    (currentUrl, key) =>
-      currentUrl.replace(
-        `:${key}`,
-        String((pathVariables as Record<string, string | number>)[key])
-      ),
-    url
-  );
+  const parsedUrl = pathVariables
+    ? Object.keys(pathVariables).reduce(
+        (currentUrl, key) =>
+          currentUrl.replace(
+            `:${key}`,
+            String((pathVariables as Record<string, string | number>)[key])
+          ),
+        url
+      )
+    : url; // 如果没有 pathVariables，直接使用原始 url
 
   const config: AxiosRequestConfig<D> = {
     url: parsedUrl,
-    params,
-    data,
     ...rest,
     headers: {
       ...rest.headers,
     },
   };
 
-  // 请求前检查是否需要添加 token
+  /**
+   * 请求前检查是否需要添加 token
+   * 不放入到 请求拦截器中:
+   *  因为根据 传入的 ignoreAuth 来进行判断
+   *  并不是根据是否有token来进行判断
+   */
   if (!ignoreAuth) {
     const token = TokenManager.getToken();
     if (token) {
-      config.headers!.Authorization = `Bearer ${token.access}`;
+      config.headers!.Authorization = token.access;
     } else {
       // 需要 弹出提示 或者返回到登录页
       errorHandler.handleError("没有token！！！", { type: "error" });
